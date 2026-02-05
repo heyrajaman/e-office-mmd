@@ -73,6 +73,7 @@ router.use(protect);
  *       '409':
  *         description: User already exists
  */
+router.get("/", restrictTo(ROLES.ADMIN, ROLES.STAFF, ROLES.BOARD_MEMBER), UserController.getAllUsers);
 router.post("/", restrictTo(ROLES.ADMIN), UserController.createUser);
 
 export default router;
