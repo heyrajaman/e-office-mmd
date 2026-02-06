@@ -1,7 +1,9 @@
 import FileService from "../services/file.service.js";
 import CreateFileRequestDto from "../dtos/request/CreateFileRequestDto.js";
 import AppError from "../../../utils/AppError.js";
-
+// --- FIX: Import MinIO config and Path ---
+import { minioClient, BUCKET_NAME } from "../../../config/minio.js";
+import path from "path";
 class FileController {
   async createFile(req, res, next) {
     try {
@@ -109,6 +111,53 @@ class FileController {
       next(error);
     }
   }
+
+async downloadFile(req, res, next) {
+    try {
+      let { fileKey } = req.query;
+
+      if (!fileKey) {
+        throw new AppError("File key is required", 400);
+      }
+
+      // FIX 1: Explicitly decode the URL to ensure %2F becomes /
+      fileKey = decodeURIComponent(fileKey);
+
+      // FIX 2: Remove leading slash if present (MinIO doesn't like /files/...)
+      if (fileKey.startsWith("/")) {
+        fileKey = fileKey.substring(1);
+      }
+
+      // DEBUG LOG: This will print in your VS Code terminal. 
+      // Compare this output with your MinIO browser path!
+      console.log("📂 [DEBUG] Attempting Download:");
+      console.log(`   - Bucket: '${BUCKET_NAME}'`);
+      console.log(`   - FileKey: '${fileKey}'`);
+
+      // Check if file exists in MinIO
+      try {
+        await minioClient.statObject(BUCKET_NAME, fileKey);
+      } catch (err) {
+        console.error("❌ [MinIO Error]:", err.message); // Print actual MinIO error
+        throw new AppError(
+          `File not found in bucket '${BUCKET_NAME}' at path: ${fileKey}`,
+          404
+        );
+      }
+
+      // Stream the file
+      const dataStream = await minioClient.getObject(BUCKET_NAME, fileKey);
+      const filename = path.basename(fileKey);
+      
+      res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+      res.setHeader("Content-Type", "application/octet-stream");
+
+      dataStream.pipe(res);
+    } catch (error) {
+      next(error);
+    }
+  }
+
 }
 
 export default new FileController();

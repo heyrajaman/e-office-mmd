@@ -99,7 +99,7 @@ class WorkflowService {
         const isPinValid = await currentUser.validatePin(moveData.pin);
 
         if (!isPinValid) {
-          throw new AppError("Invalid Security PIN.", 401);
+          throw new AppError("Invalid Security PIN.", 403);
         }
       }
 

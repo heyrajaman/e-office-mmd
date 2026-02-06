@@ -6,8 +6,9 @@ import {
   FileAttachment,
   User,
   Department,
+  Designation,
 } from "../../../database/models/index.js"; // Import Department
-import { FILE_STATUS, ROLES } from "../../../config/constants.js";
+import { FILE_STATUS, ROLES,MOVEMENT_ACTIONS } from "../../../config/constants.js";
 import { minioClient, BUCKET_NAME } from "../../../config/minio.js";
 import AppError from "../../../utils/AppError.js";
 import FileResponseDto from "../dtos/response/FileResponseDto.js"; // Import DTO
@@ -169,7 +170,7 @@ class FileService {
   async getOutbox(userId) {
     // Logic: Files I created OR files I worked on, BUT I don't hold them right now.
     // For V1, let's keep it simple: "Files I Created" that are NOT with me.
-
+/*
     const files = await FileMaster.findAll({
       where: {
         created_by: userId,
@@ -179,6 +180,53 @@ class FileService {
         {
           model: User,
           as: "currentHolder", // So I can see "Oh, Suresh has it now"
+          attributes: ["full_name"],
+          include: [
+            { model: Designation, as: "designation", attributes: ["name"] },
+          ],
+        },
+        {
+          model: Department,
+          as: "department",
+          attributes: ["name"],
+        },
+        {
+          model: User,
+          as: "creator",
+          attributes: ["full_name"],
+        },
+      ],
+      order: [["updatedAt", "DESC"]],
+    });
+
+    return files.map((file) => new FileResponseDto(file));
+    */
+   // UPDATED LOGIC: Fetch files I have moved/acted upon, but do not currently hold.
+
+    // 1. Find all file IDs where I was the sender (History check)
+    const movements = await FileMovement.findAll({
+      where: { sent_by: userId },
+      attributes: ["file_id"],
+      raw: true,
+    });
+
+    // Extract unique IDs (e.g., [1, 5, 12])
+    const fileIds = [...new Set(movements.map((m) => m.file_id))];
+
+    if (fileIds.length === 0) {
+      return []; // Return empty if user has never moved any file
+    }
+
+    // 2. Fetch the actual files using those IDs
+    const files = await FileMaster.findAll({
+      where: {
+        id: { [Op.in]: fileIds }, // Must be in my history
+        current_holder_id: { [Op.ne]: userId }, // Must NOT be with me right now
+      },
+      include: [
+        {
+          model: User,
+          as: "currentHolder",
           attributes: ["full_name"],
           include: [
             { model: Designation, as: "designation", attributes: ["name"] },
@@ -314,31 +362,49 @@ class FileService {
   }
 
   async getDashboardStats(userId) {
-    // 1. Count Pending (Inbox)
-    const pendingCount = await FileMaster.count({
+  // A. Pending: Files currently sitting in my Inbox
+ const pendingCount = await FileMaster.count({
       where: { current_holder_id: userId },
     });
 
-    // 2. Count Created (Total I started)
+    // 2. Created: Total files I initiated
     const createdCount = await FileMaster.count({
       where: { created_by: userId },
     });
 
-    // 3. Count Approved (My success rate)
-    const approvedCount = await FileMaster.count({
-      where: {
-        created_by: userId,
-        status: FILE_STATUS.APPROVED,
-      },
+    // --- NEW LOGIC START ---
+    // Find ALL files I have ever "touched" (sent/forwarded/approved/rejected)
+    // We check the history table (FileMovement) for any action by me.
+    const myMovements = await FileMovement.findAll({
+      where: { sent_by: userId },
+      attributes: ["file_id"],
+      raw: true, // Just give me raw data, faster
     });
 
-    // 4. Count Rejected
-    const rejectedCount = await FileMaster.count({
-      where: {
-        created_by: userId,
-        status: FILE_STATUS.REJECTED,
-      },
-    });
+    // Get a unique list of File IDs I have worked on
+    const myFileIds = [...new Set(myMovements.map((m) => m.file_id))];
+
+    let approvedCount = 0;
+    let rejectedCount = 0;
+
+    if (myFileIds.length > 0) {
+      // 3. Approved: Out of the files I touched, how many are now APPROVED?
+      approvedCount = await FileMaster.count({
+        where: {
+          id: { [Op.in]: myFileIds }, // Must be in my history
+          status: FILE_STATUS.APPROVED,
+        },
+      });
+
+      // 4. Rejected: Out of the files I touched, how many are now REJECTED?
+      rejectedCount = await FileMaster.count({
+        where: {
+          id: { [Op.in]: myFileIds }, // Must be in my history
+          status: FILE_STATUS.REJECTED,
+        },
+      });
+    }
+    // --- NEW LOGIC END ---
 
     return {
       pending: pendingCount,

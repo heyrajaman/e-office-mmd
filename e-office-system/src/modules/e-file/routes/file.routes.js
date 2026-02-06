@@ -30,6 +30,7 @@ router.use(protect);
  *       '200':
  *         description: List of files currently held by user
  */
+router.get("/download", FileController.downloadFile);
 
 router.get("/inbox", FileController.getInbox);
 
@@ -114,6 +115,8 @@ router.get("/stats", FileController.getDashboardStats);
  *       '200':
  *         description: Audit trail of the file
  */
+// Add this BEFORE the /:id/history route to avoid conflicts
+
 router.get("/:id/history", FileController.getFileHistory);
 
 // POST /api/v1/files
