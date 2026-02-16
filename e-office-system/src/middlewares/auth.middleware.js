@@ -6,7 +6,9 @@ export const protect = async (req, res, next) => {
   try {
     // 1. Get token from header
     let token;
-    if (
+    if (req.cookies && req.cookies.jwt) {
+      token = req.cookies.jwt;
+    } else if (
       req.headers.authorization &&
       req.headers.authorization.startsWith("Bearer")
     ) {
@@ -29,6 +31,7 @@ export const protect = async (req, res, next) => {
         { model: Department, as: "department" },
       ],
     });
+
     if (!currentUser) {
       return next(
         new AppError("The user belonging to this token no longer exists.", 401),

@@ -9,11 +9,35 @@ class AuthController {
       const loginData = LoginRequestDto.validate(req.body);
       const authResponse = await AuthService.login(loginData);
 
+      res.cookie("jwt", authResponse.token, {
+        httpOnly: true,
+        secure: process.env.NODE_ENV === "production",
+        sameSite: "strict",
+        maxAge: 24 * 60 * 60 * 1000, // 1 day in milliseconds (matches your JWT expiry)
+      });
+
+      const userData = { ...authResponse };
+      delete userData.token;
+
       res.status(200).json({
         success: true,
         message: "Login successful",
-        data: authResponse,
+        data: userData,
       });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  async logout(req, res, next) {
+    try {
+      res.cookie("jwt", "loggedout", {
+        httpOnly: true,
+        expires: new Date(Date.now() + 10 * 1000), // Expires in 10 seconds
+      });
+      res
+        .status(200)
+        .json({ success: true, message: "Logged out successfully" });
     } catch (error) {
       next(error);
     }

@@ -1,3 +1,4 @@
+import fs from "fs/promises";
 import { Op } from "sequelize";
 import path from "path";
 import {
@@ -48,7 +49,9 @@ class FileService {
       const pucUniqueSuffix = `${pucTimestamp}-${Math.round(Math.random() * 1e4)}`;
       const pucObjectName = `files/${year}/${deptCode}/${pucUniqueSuffix}${pucExt}`;
 
-      await minioClient.putObject(BUCKET_NAME, pucObjectName, pucFile.buffer);
+      await minioClient.fPutObject(BUCKET_NAME, pucObjectName, pucFile.path, {
+        "Content-Type": pucFile.mimetype,
+      });
 
       // Save File
       const newFile = await FileMaster.create(
@@ -85,10 +88,13 @@ class FileService {
             const attSuffix = `${Date.now()}-${Math.round(Math.random() * 1e4)}`;
             const attObjectName = `files/${year}/${deptCode}/attachments/${attSuffix}${attExt}`;
 
-            await minioClient.putObject(
+            await minioClient.fPutObject(
               BUCKET_NAME,
               attObjectName,
-              file.buffer,
+              file.path,
+              {
+                "Content-Type": file.mimetype,
+              },
             );
 
             return FileAttachment.create(
@@ -123,6 +129,13 @@ class FileService {
 
       await transaction.commit();
 
+      await fs.unlink(pucFile.path).catch(console.error);
+      if (attachments) {
+        await Promise.all(
+          attachments.map((f) => fs.unlink(f.path).catch(console.error)),
+        );
+      }
+
       await newFile.reload({
         include: [
           { model: Department, as: "department" },
@@ -137,6 +150,14 @@ class FileService {
       return new FileResponseDto(newFile);
     } catch (error) {
       await transaction.rollback();
+
+      if (pucFile && pucFile.path)
+        await fs.unlink(pucFile.path).catch(console.error);
+      if (attachments) {
+        await Promise.all(
+          attachments.map((f) => fs.unlink(f.path).catch(console.error)),
+        );
+      }
       throw error;
     }
   }
@@ -160,26 +181,41 @@ class FileService {
     const year = new Date().getFullYear();
 
     const createdAttachments = [];
-    for (const file of files) {
-      const attExt = path.extname(file.originalname);
-      const attSuffix = `${Date.now()}-${Math.round(Math.random() * 1e4)}`;
-      const attObjectName = `files/${year}/attachments/${attSuffix}${attExt}`;
+    try {
+      for (const file of files) {
+        const attExt = path.extname(file.originalname);
+        const attSuffix = `${Date.now()}-${Math.round(Math.random() * 1e4)}`;
+        const attObjectName = `files/${year}/attachments/${attSuffix}${attExt}`;
 
-      await minioClient.putObject(BUCKET_NAME, attObjectName, file.buffer);
+        await minioClient.fPutObject(BUCKET_NAME, attObjectName, file.path, {
+          "Content-Type": file.mimetype,
+        });
 
-      const newAttachment = await FileAttachment.create({
-        file_id: fileMaster.id,
-        original_name: file.originalname,
-        file_key: attObjectName,
-        file_url: attObjectName,
-        mime_type: file.mimetype,
-        file_size: file.size,
-      });
+        const newAttachment = await FileAttachment.create({
+          file_id: fileMaster.id,
+          original_name: file.originalname,
+          file_key: attObjectName,
+          file_url: attObjectName,
+          mime_type: file.mimetype,
+          file_size: file.size,
+        });
 
-      createdAttachments.push(newAttachment);
+        createdAttachments.push(newAttachment);
+      }
+
+      await Promise.all(
+        files.map((f) => fs.unlink(f.path).catch(console.error)),
+      );
+
+      return createdAttachments;
+    } catch (error) {
+      if (files) {
+        await Promise.all(
+          files.map((f) => fs.unlink(f.path).catch(console.error)),
+        );
+      }
+      throw error;
     }
-
-    return createdAttachments;
   }
 
   async removeAttachment(attachmentId, currentUser) {
@@ -293,26 +329,26 @@ class FileService {
       }
 
       const data = files.map((file) => {
-       if (file.movements && file.movements.length > 0) {
-            // Sort just in case the DB order wasn't strict
-            file.movements.sort((a, b) => b.id - a.id);
+        if (file.movements && file.movements.length > 0) {
+          // Sort just in case the DB order wasn't strict
+          file.movements.sort((a, b) => b.id - a.id);
 
-            // A. The Remark comes from the absolute latest action (e.g., "Verified via PIN")
-            const latestAction = file.movements[0];
+          // A. The Remark comes from the absolute latest action (e.g., "Verified via PIN")
+          const latestAction = file.movements[0];
 
-            // B. The Sender comes from the latest "FORWARD" or "CREATED" action
-            // (Skipping "VERIFY" so your own name doesn't appear as sender)
-            const senderAction = file.movements.find(m => 
-                m.action === "FORWARD" || m.action === "CREATED"
-            );
+          // B. The Sender comes from the latest "FORWARD" or "CREATED" action
+          // (Skipping "VERIFY" so your own name doesn't appear as sender)
+          const senderAction = file.movements.find(
+            (m) => m.action === "FORWARD" || m.action === "CREATED",
+          );
 
-            // C. Combine them for the DTO
-            file.latestMovement = {
-                ...latestAction.toJSON(), // Use Remark/Date from Latest
-                sender: senderAction ? senderAction.sender : latestAction.sender // Use Sender from Forwarder
-            };
+          // C. Combine them for the DTO
+          file.latestMovement = {
+            ...latestAction.toJSON(), // Use Remark/Date from Latest
+            sender: senderAction ? senderAction.sender : latestAction.sender, // Use Sender from Forwarder
+          };
         } else {
-            file.latestMovement = null;
+          file.latestMovement = null;
         }
         return new FileResponseDto(file);
       });
