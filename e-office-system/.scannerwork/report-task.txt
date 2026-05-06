@@ -1,0 +1,6 @@
+projectKey=E-office-backend
+serverUrl=https://sonarqube.qolarisdata.com
+serverVersion=26.2.0.119303
+dashboardUrl=https://sonarqube.qolarisdata.com/dashboard?id=E-office-backend
+ceTaskId=2be95f8a-2ae2-4a05-8536-bd354bd0966e
+ceTaskUrl=https://sonarqube.qolarisdata.com/api/ce/task?id=2be95f8a-2ae2-4a05-8536-bd354bd0966e
