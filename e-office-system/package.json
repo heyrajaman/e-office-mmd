@@ -9,7 +9,8 @@
     "dev": "nodemon server.js",
     "seed": "node src/database/seeders/adminSeeder.js",
     "seeddept": "node src/database/seeders/departmentSeeder.js",
-    "seeddsgn": "node src/database/seeders/designationSeeder.js"
+    "seeddsgn": "node src/database/seeders/designationSeeder.js",
+    "test": "jest"
   },
   "keywords": [],
   "author": "",
@@ -43,6 +44,7 @@
     "swagger-ui-express": "^5.0.1"
   },
   "devDependencies": {
+    "jest": "^30.3.0",
     "nodemon": "^3.1.11"
   }
 }
