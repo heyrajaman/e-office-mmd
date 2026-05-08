@@ -5,7 +5,30 @@ import CreateDepartmentRequestDto from "../dtos/request/CreateDepartmentRequestD
 import CreateDesignationRequestDto from "../dtos/request/CreateDesignationRequestDto.js";
 import AppError from "../../../utils/AppError.js";
 import { minioClient, BUCKET_NAME } from "../../../config/minio.js";
-import fs from "fs";
+import fs from "node:fs";
+
+// Helper: Safely cleanup uploaded files on error or validation failure
+const cleanupUploadedFile = async (file) => {
+  if (!file) return;
+
+  // Cleanup object uploaded by multer-s3 (if applicable)
+  if (file.key) {
+    try {
+      await minioClient.removeObject(BUCKET_NAME, file.key);
+    } catch {
+      // Best-effort cleanup
+    }
+  }
+
+  // Cleanup temp disk file (disk storage)
+  if (file.path && fs.existsSync(file.path)) {
+    try {
+      fs.unlinkSync(file.path);
+    } catch {
+      // Best-effort cleanup
+    }
+  }
+};
 
 class UserController {
   async createUser(req, res, next) {
@@ -17,22 +40,7 @@ class UserController {
       if (signatureFile) {
         const sizeKB = signatureFile.size / 1024;
         if (sizeKB < 20 || sizeKB > 100) {
-          // Cleanup object uploaded by multer-s3
-          if (signatureFile.key) {
-            try {
-              await minioClient.removeObject(BUCKET_NAME, signatureFile.key);
-            } catch {
-              // Best-effort cleanup
-            }
-          }
-          // Cleanup temp disk file (disk storage)
-          if (signatureFile.path && fs.existsSync(signatureFile.path)) {
-            try {
-              fs.unlinkSync(signatureFile.path);
-            } catch {
-              // Best-effort cleanup
-            }
-          }
+          await cleanupUploadedFile(signatureFile);
           throw new AppError(
             "Signature image must be between 20KB and 100KB.",
             400,
@@ -50,20 +58,7 @@ class UserController {
         data: createdUser,
       });
     } catch (error) {
-      if (req.file?.key) {
-        try {
-          await minioClient.removeObject(BUCKET_NAME, req.file.key);
-        } catch {
-          // Best-effort cleanup
-        }
-      }
-      if (req.file?.path && fs.existsSync(req.file.path)) {
-        try {
-          fs.unlinkSync(req.file.path);
-        } catch {
-          // Best-effort cleanup
-        }
-      }
+      await cleanupUploadedFile(req.file);
       next(error);
     }
   }

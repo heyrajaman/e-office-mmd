@@ -1,4 +1,4 @@
-import path from "path";
+import path from "node:path";
 import fileService from "../../e-file/services/file.service.js";
 import {
   sequelize,

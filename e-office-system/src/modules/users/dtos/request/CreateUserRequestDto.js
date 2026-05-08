@@ -1,5 +1,5 @@
 import Joi from "joi";
-import { ROLES, DESIGNATIONS } from "../../../../config/constants.js";
+import { ROLES } from "../../../../config/constants.js";
 import AppError from "../../../../utils/AppError.js";
 
 class CreateUserRequestDto {

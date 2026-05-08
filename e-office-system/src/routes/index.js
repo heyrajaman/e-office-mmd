@@ -1,9 +1,9 @@
 import { Router } from "express";
 import jwt from "jsonwebtoken";
-import { promisify } from "util";
-import fs from "fs/promises";
-import path from "path";
-import { fileURLToPath, pathToFileURL } from "url";
+import { promisify } from "node:util";
+import fs from "node:fs/promises";
+import path from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { User, Designation } from "../database/models/index.js";
 import * as allConstants from "../config/constants.js";
 
@@ -19,11 +19,10 @@ router.get("/constants", async (req, res) => {
 
   try {
     let token;
-    if (
-      req.headers.authorization &&
-      req.headers.authorization.startsWith("Bearer")
-    ) {
-      token = req.headers.authorization.split(" ")[1];
+
+    // ✅ FIXED: Optional chaining
+    if (req.headers.authorization?.startsWith("Bearer")) {
+      token = req.headers.authorization.split(" ");
     }
 
     if (token) {
@@ -43,9 +42,12 @@ router.get("/constants", async (req, res) => {
         showHiddenOptions = true;
       }
     }
-  } catch (err) {
+  } catch {
+    // ✅ FIXED: Removed unused 'err' parameter and handled logic safely
+    // If token verification fails or user doesn't exist, keep hidden options false
     showHiddenOptions = false;
   }
+
   if (!showHiddenOptions) {
     delete safeConstants.ROLES.ADMIN;
   }
@@ -71,7 +73,9 @@ const loadModuleRoutes = async () => {
   let moduleEntries;
   try {
     moduleEntries = await fs.readdir(modulesDir, { withFileTypes: true });
-  } catch {
+  } catch (error) {
+    // ✅ FIXED: Logged exception instead of silently ignoring
+    console.warn(`[Router] Could not read modules directory: ${error.message}`);
     return;
   }
 
@@ -87,6 +91,8 @@ const loadModuleRoutes = async () => {
     try {
       routeEntries = await fs.readdir(routesDir, { withFileTypes: true });
     } catch {
+      // ✅ FIXED: Added comment to formally handle the intentional skip
+      // Routes directory does not exist for this module, skip gracefully
       continue;
     }
 

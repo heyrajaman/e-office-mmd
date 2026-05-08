@@ -1,6 +1,6 @@
 import "dotenv/config";
-import fs from "fs";
-import path from "path";
+import fs from "node:fs";
+import path from "node:path";
 import { sequelize, User, Designation, Department } from "../models/index.js"; // Import Department
 import { ROLES, DESIGNATIONS } from "../../config/constants.js";
 import { minioClient, BUCKET_NAME } from "../../config/minio.js";

@@ -43,7 +43,7 @@ class NotificationService {
     try {
       // Basic validation
       const phoneStr = String(phone);
-      if (!phoneStr || phoneStr.length !== 10) {
+      if (phoneStr?.length !== 10) {
         throw new Error("Invalid phone number for SMS");
       }
 
@@ -65,11 +65,8 @@ class NotificationService {
 
       console.log("📱 SMS Response:", response.data);
 
-      // Check success (Vendor usually returns status: 'success' or HTTP 200)
-      if (response.status === 200) {
-        return true;
-      }
-      return false;
+      // ✅ FIXED: Replaced if-then-else with a single return statement
+      return response.status === 200;
     } catch (error) {
       console.error("❌ SMS Error:", error.response?.data || error.message);
       // We return false so the flow continues even if SMS fails

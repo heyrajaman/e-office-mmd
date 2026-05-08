@@ -1,7 +1,7 @@
 import multer from "multer";
-import path from "path";
-import crypto from "crypto";
-import fs from "fs";
+import path from "node:path";
+import crypto from "node:crypto";
+import fs from "node:fs";
 import { fileTypeFromFile } from "file-type";
 import AppError from "../utils/AppError.js";
 
@@ -9,9 +9,9 @@ const tmpUploadsDir = path.join(process.cwd(), "tmp_uploads");
 fs.mkdirSync(tmpUploadsDir, { recursive: true });
 
 const buildTempFilename = (file) => {
-  const ext = path.extname(file.originalname || "");
+  const ext = path.extname(file?.originalname || "");
   const uniqueSuffix = crypto.randomBytes(16).toString("hex");
-  return `${file.fieldname}-${Date.now()}-${uniqueSuffix}${ext}`;
+  return `${file?.fieldname}-${Date.now()}-${uniqueSuffix}${ext}`;
 };
 
 const diskStorage = multer.diskStorage({
@@ -61,37 +61,45 @@ const safeUnlink = (filePath) => {
   }
 };
 
-export const validatePdfUploads = async (req, res, next) => {
-  try {
-    const files = Array.isArray(req.files)
-      ? req.files
-      : req.file
-        ? [req.file]
-        : [];
+// Helper 1: Eliminates the ugly nested ternary operation
+const getUploadedFiles = (req) => {
+  if (Array.isArray(req.files)) return req.files;
+  if (req.file) return [req.file];
+  return [];
+};
 
-    for (const file of files) {
-      if (!file?.path) continue;
-      const type = await fileTypeFromFile(file.path);
-      if (!type || type.mime !== "application/pdf") {
-        for (const f of files) safeUnlink(f?.path);
-        return next(
-          new AppError(
-            "Invalid file signature. Only actual PDFs are allowed.",
-            400,
-          ),
-        );
-      }
+// Helper 2: Eliminates the nested loops driving up Cognitive Complexity
+const validateFilesArePdfs = async (files) => {
+  for (const file of files) {
+    if (!file?.path) continue;
+    const type = await fileTypeFromFile(file.path);
+    if (type?.mime !== "application/pdf") {
+      return false;
+    }
+  }
+  return true;
+};
+
+export const validatePdfUploads = async (req, res, next) => {
+  const files = getUploadedFiles(req);
+
+  try {
+    const arePdfsValid = await validateFilesArePdfs(files);
+
+    if (!arePdfsValid) {
+      files.forEach((f) => safeUnlink(f?.path));
+      return next(
+        new AppError(
+          "Invalid file signature. Only actual PDFs are allowed.",
+          400,
+        ),
+      );
     }
 
     next();
   } catch (err) {
     // On unexpected errors, cleanup temp files.
-    const files = Array.isArray(req.files)
-      ? req.files
-      : req.file
-        ? [req.file]
-        : [];
-    for (const file of files) safeUnlink(file?.path);
+    files.forEach((f) => safeUnlink(f?.path));
     next(err);
   }
 };
@@ -104,7 +112,8 @@ export const validateSignatureUpload = async (req, res, next) => {
     const type = await fileTypeFromFile(file.path);
     const allowedMimes = new Set(["image/jpeg", "image/png"]);
 
-    if (!type || !allowedMimes.has(type.mime)) {
+    // Uses optional chaining to simplify the check
+    if (!allowedMimes.has(type?.mime)) {
       safeUnlink(file.path);
       return next(
         new AppError(

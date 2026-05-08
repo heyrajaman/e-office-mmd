@@ -30,7 +30,7 @@ class UserService {
       where: { phone_number: data.phoneNumber },
     });
     if (existingUser) {
-      throw new AppError("User with this phone number already exists", 409); // 409 Conflict
+      throw new AppError("User with this phone number already exists", 409);
     }
 
     // 2. Check if Department Exists
@@ -46,36 +46,32 @@ class UserService {
 
     let signatureUrl = null;
     if (signatureFile) {
-      // Uploaded directly to MinIO via multer-s3
+      // ✅ FIXED: Flattened 'else { if }' into 'else if'
       if (signatureFile.key) {
         signatureUrl = signatureFile.key;
+      } else if (signatureFile.path) {
+        signatureUrl = await storageService.uploadFileToMinIO(
+          signatureFile,
+          "signatures/users",
+        );
+      } else if (signatureFile.buffer) {
+        signatureUrl = await storageService.uploadBufferToMinIO(
+          signatureFile,
+          "signatures/users",
+        );
       } else {
-        // Backward compatibility: if some caller still provides a local file or buffer.
-        if (signatureFile.path) {
-          signatureUrl = await storageService.uploadFileToMinIO(
-            signatureFile,
-            "signatures/users",
-          );
-        } else if (signatureFile.buffer) {
-          signatureUrl = await storageService.uploadBufferToMinIO(
-            signatureFile,
-            "signatures/users",
-          );
-        } else {
-          throw new AppError(
-            "Signature upload failed: unsupported file payload.",
-            500,
-          );
-        }
+        throw new AppError(
+          "Signature upload failed: unsupported file payload.",
+          500,
+        );
       }
     }
 
     // 3. Create User
-    // Note: Password hashing is handled by the 'beforeCreate' hook in User model
     const newUser = await User.create({
       full_name: data.fullName,
       phone_number: data.phoneNumber,
-      password: data.password, // Raw password, model will hash it
+      password: data.password,
       system_role: data.systemRole,
       designation_id: data.designationId,
       department_id: data.departmentId,
@@ -84,68 +80,87 @@ class UserService {
       is_active: true,
     });
 
-    // 4. Reload user to get the associated Department data for the response
     await newUser.reload({ include: ["department", "designation"] });
 
-    // 5. Return Sanitized DTO
-    return new UserResponseDto(newUser);
+    // ✅ FIXED: Removed 'new' since it's a factory function now
+    return UserResponseDto(newUser);
+  }
+
+  // ✅ HELPER 1: Extracts complexity out of updateUser
+  _checkAdminPrivilegeGrant(currentUser, data) {
+    if (data.systemRole === ROLES.ADMIN) {
+      // ✅ FIXED: Used optional chaining
+      if (currentUser?.system_role !== ROLES.ADMIN) {
+        throw new AppError(
+          "CRITICAL: Unauthorized attempt to grant Admin privileges.",
+          403,
+        );
+      }
+    }
+  }
+
+  // ✅ HELPER 2: Extracts complexity out of updateUser
+  async _validateAndReallocateDesignation(
+    userId,
+    newDesignationId,
+    targetDepartmentId,
+    isChanging,
+    transaction,
+  ) {
+    const newDesignation = await Designation.findByPk(newDesignationId, {
+      transaction,
+    });
+    if (!newDesignation) throw new AppError("Designation not found", 404);
+
+    if (isChanging) {
+      await this._handleSeatReallocation(
+        userId,
+        newDesignation,
+        targetDepartmentId,
+        transaction,
+      );
+    }
+  }
+
+  // ✅ HELPER 3: Extracts complexity out of updateUser
+  async _downgradeEmptyDesignation(oldDesignationId, transaction) {
+    const remainingUsersCount = await User.count({
+      where: { designation_id: oldDesignationId },
+      transaction,
+    });
+
+    if (remainingUsersCount === 0) {
+      await Designation.update(
+        { level: 50 },
+        { where: { id: oldDesignationId }, transaction },
+      );
+    }
   }
 
   async updateUser(currentUser, userId, data) {
     const transaction = await sequelize.transaction();
     try {
-      // Defense in depth: protect admin elevation at the service layer
-      if (data.systemRole === ROLES.ADMIN) {
-        if (!currentUser || currentUser.system_role !== ROLES.ADMIN) {
-          throw new AppError(
-            "CRITICAL: Unauthorized attempt to grant Admin privileges.",
-            403,
-          );
-        }
-      }
+      this._checkAdminPrivilegeGrant(currentUser, data);
 
       const user = await User.findByPk(userId);
-      if (!user) {
-        throw new AppError("User not found", 404);
-      }
+      if (!user) throw new AppError("User not found", 404);
 
-      // =========================================================
-      // 1. ADMIN ROLE SWAP (Presidential Power)
-      // =========================================================
-      // If setting a NEW Admin, demote the OLD Admin to Staff.
       await this._handleAdminRoleSwap(user, data, transaction);
 
-      // ---------------------------------------------------------
-      // 2. DESIGNATION & SEAT SWAP LOGIC
-      // ---------------------------------------------------------
-      let newDesignation = null;
+      let isDesignationChanging = false;
+      const oldDesignationId = user.designation_id;
 
-      // Check if designation is changing
-      if (data.designationId && data.designationId !== user.designation_id) {
-        newDesignation = await Designation.findByPk(data.designationId, {
-          transaction,
-        });
-        if (!newDesignation) throw new AppError("Designation not found", 404);
-
+      if (data.designationId) {
+        isDesignationChanging = data.designationId !== user.designation_id;
         const targetDepartmentId = data.departmentId || user.department_id;
-        await this._handleSeatReallocation(
+        await this._validateAndReallocateDesignation(
           userId,
-          newDesignation,
+          data.designationId,
           targetDepartmentId,
+          isDesignationChanging,
           transaction,
         );
       }
-      // Validation: If designation ID provided but NOT changing, just verify it exists
-      else if (data.designationId) {
-        newDesignation = await Designation.findByPk(data.designationId, {
-          transaction,
-        });
-        if (!newDesignation) throw new AppError("Designation not found", 404);
-      }
-
-      const oldDesignationId = user.designation_id;
-      const isDesignationChanging =
-        data.designationId && data.designationId !== user.designation_id;
 
       if (data.departmentId) {
         const department = await Department.findByPk(data.departmentId, {
@@ -159,42 +174,32 @@ class UserService {
           where: { email: data.email, id: { [Op.ne]: userId } },
           transaction,
         });
-        if (emailExists) {
+        if (emailExists)
           throw new AppError("Email already in use by another user", 409);
-        }
       }
 
+      // ✅ FIXED: Removed negated ternary conditions (e.g. replaced a !== undefined ? a : b with a === undefined ? b : a)
       Object.assign(user, {
         full_name: data.fullName || user.full_name,
-        email: data.email !== undefined ? data.email : user.email,
+        email: data.email === undefined ? user.email : data.email,
         system_role: data.systemRole || user.system_role,
         designation_id: data.designationId || user.designation_id,
         department_id: data.departmentId || user.department_id,
-        is_active: data.isActive !== undefined ? data.isActive : user.is_active,
+        is_active: data.isActive === undefined ? user.is_active : data.isActive,
       });
 
       await user.save({ transaction });
 
       if (isDesignationChanging) {
-        const remainingUsersCount = await User.count({
-          where: { designation_id: oldDesignationId },
-          transaction,
-        });
-
-        if (remainingUsersCount === 0) {
-          await Designation.update(
-            { level: 50 },
-            { where: { id: oldDesignationId }, transaction },
-          );
-        }
+        await this._downgradeEmptyDesignation(oldDesignationId, transaction);
       }
 
-      await transaction.commit(); // 6. Commit
-
+      await transaction.commit();
       await redisClient.del(`user:${userId}`);
-
       await user.reload({ include: ["department", "designation"] });
-      return new UserResponseDto(user);
+
+      // ✅ FIXED: Removed 'new' since it's a factory function now
+      return UserResponseDto(user);
     } catch (error) {
       await transaction.rollback();
       throw error;
@@ -255,8 +260,12 @@ class UserService {
   }
 
   async getAllUsers(currentUserId, searchQuery = null, page = 1, limit = 50) {
-    const pageNum = Number.isFinite(Number(page)) ? parseInt(page) : 1;
-    const limitNum = Number.isFinite(Number(limit)) ? parseInt(limit) : 50;
+    const pageNum = Number.isFinite(Number(page))
+      ? Number.parseInt(page, 10)
+      : 1;
+    const limitNum = Number.isFinite(Number(limit))
+      ? Number.parseInt(limit, 10)
+      : 50;
     const safePage = pageNum > 0 ? pageNum : 1;
     const safeLimit = Math.min(Math.max(limitNum, 1), 100);
     const offset = (safePage - 1) * safeLimit;
@@ -269,7 +278,6 @@ class UserService {
     const q = typeof searchQuery === "string" ? searchQuery.trim() : "";
     if (q) {
       whereClause[Op.or] = [
-        // Prefix search allows DB index usage (no leading wildcard)
         { full_name: { [Op.like]: `${q}%` } },
         { "$designation.name$": { [Op.like]: `${q}%` } },
       ];
@@ -280,17 +288,24 @@ class UserService {
       limit: safeLimit,
       offset,
       distinct: true,
-      attributes: ["id", "full_name","phone_number", "email", "system_role", "is_active"],
+      attributes: [
+        "id",
+        "full_name",
+        "phone_number",
+        "email",
+        "system_role",
+        "is_active",
+      ],
       include: [
         {
           model: Designation,
           as: "designation",
-          attributes: ["id","name"],
+          attributes: ["id", "name"],
         },
         {
           model: Department,
           as: "department",
-          attributes: ["id","name"],
+          attributes: ["id", "name"],
         },
       ],
       order: [["full_name", "ASC"]],
@@ -307,20 +322,16 @@ class UserService {
   }
 
   async getAllDepartments() {
-    // 1. Check if data exists in Redis cache
     const cachedDepartments = await redisClient.get("departments:all");
     if (cachedDepartments) {
-      return JSON.parse(cachedDepartments); // Return lightning-fast cached data
+      return JSON.parse(cachedDepartments);
     }
 
-    // Fetch only ID and Name to keep it lightweight for dropdowns
     const departments = await Department.findAll({
       attributes: ["id", "name"],
-      where: { is_active: true }, // Optional: Only show active depts
+      where: { is_active: true },
     });
 
-    // 3. Save the result to Redis for future requests
-    // setEx saves it with a time-to-live. 86400 seconds = 24 hours.
     await redisClient.setEx(
       "departments:all",
       86400,
@@ -340,18 +351,15 @@ class UserService {
       showSystemAdmin = true;
     }
 
-    // Define cache key based on role context
     const cacheKey = showSystemAdmin
       ? "designations:president"
       : "designations:standard";
 
-    // 1. Check Redis cache
     const cachedDesignations = await redisClient.get(cacheKey);
     if (cachedDesignations) {
       return JSON.parse(cachedDesignations);
     }
 
-    // 2. Fetch from MySQL
     const whereClause = { is_active: true };
     if (!showSystemAdmin) {
       whereClause.name = { [Op.ne]: DESIGNATIONS.SYSTEM_ADMIN };
@@ -363,14 +371,12 @@ class UserService {
       order: [["level", "DESC"]],
     });
 
-    // 3. Save to Redis
     await redisClient.setEx(cacheKey, 86400, JSON.stringify(designations));
 
     return designations;
   }
 
   async createDepartment(data) {
-    // 1. Check for Duplicate Name
     const existingDept = await Department.findOne({
       where: { name: data.name },
     });
@@ -378,7 +384,6 @@ class UserService {
       throw new AppError(`Department '${data.name}' already exists`, 409);
     }
 
-    // 2. Create
     const newDept = await Department.create({
       name: data.name,
       description: data.description,
@@ -391,10 +396,8 @@ class UserService {
   }
 
   async createDesignation(data) {
-    // 1. Force Name to Uppercase (Fixes the issue)
     const normalizedName = data.name.trim().toUpperCase();
 
-    // 2. Check for Duplicate Name
     const existingDesig = await Designation.findOne({
       where: { name: normalizedName },
     });
@@ -402,9 +405,8 @@ class UserService {
       throw new AppError(`Designation '${normalizedName}' already exists`, 409);
     }
 
-    // 3. Create
     const newDesig = await Designation.create({
-      name: normalizedName, // Save as "CLERK", not "Clerk"
+      name: normalizedName,
       level: data.level,
       is_active: true,
     });

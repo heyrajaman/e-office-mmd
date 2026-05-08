@@ -6,7 +6,7 @@ import {
   FileAttachment,
   User,
   Department,
-  Designation, // Ensure Designation is imported
+  Designation,
 } from "../../../database/models/index.js";
 import { FILE_STATUS } from "../../../config/constants.js";
 import { minioClient, BUCKET_NAME } from "../../../config/minio.js";
@@ -20,12 +20,44 @@ const encodeCursor = (data) => {
 const decodeCursor = (cursor) => {
   try {
     return JSON.parse(Buffer.from(cursor, "base64").toString("utf-8"));
-  } catch (e) {
+  } catch (error) {
+    console.warn("Invalid cursor format provided:", error.message);
     return null;
   }
 };
 
 class FileService {
+  _applyCursorToWhereClause(whereClause, decodedCursor) {
+    if (!decodedCursor) return;
+    const cursorCondition = {
+      [Op.or]: [
+        { updatedAt: { [Op.lt]: decodedCursor.updatedAt } },
+        {
+          updatedAt: decodedCursor.updatedAt,
+          id: { [Op.lt]: decodedCursor.id },
+        },
+      ],
+    };
+
+    if (whereClause[Op.and]) {
+      whereClause[Op.and].push(cursorCondition);
+    } else {
+      whereClause[Op.and] = [cursorCondition];
+    }
+  }
+
+  _extractNextCursor(files, limitNum) {
+    if (files.length > limitNum) {
+      files.pop();
+      const lastItem = files.at(-1);
+      return encodeCursor({
+        updatedAt: lastItem.updatedAt,
+        id: lastItem.id,
+      });
+    }
+    return null;
+  }
+
   async createFile(fileData, user) {
     const transaction = await sequelize.transaction();
 
@@ -41,22 +73,17 @@ class FileService {
       const runningNo = String(count + 1).padStart(3, "0");
       const fileNumber = `MMD/${deptCode}/${runningNo}/${year}`;
 
-      // Save File
       const newFile = await FileMaster.create(
         {
           file_number: fileNumber,
           subject: fileData.subject,
           priority: fileData.priority,
           status: FILE_STATUS.DRAFT,
-
           created_by: user.id,
           department_id: user.department_id,
-
-          // 🚨 Position-Based Fields (Creator is the initial holder)
           current_holder_id: user.id,
           current_designation_id: user.designation_id,
           current_department_id: user.department_id,
-
           is_verified: false,
           verified_by: null,
           verified_at: null,
@@ -64,7 +91,6 @@ class FileService {
         { transaction },
       );
 
-      // Initial Movement Log
       await FileMovement.create(
         {
           file_id: newFile.id,
@@ -79,8 +105,6 @@ class FileService {
         { transaction },
       );
 
-      // 🟢 The rogue update block used to be here. It is now gone!
-
       await transaction.commit();
 
       await newFile.reload({
@@ -93,7 +117,7 @@ class FileService {
         ],
       });
 
-      return new FileResponseDto(newFile);
+      return FileResponseDto(newFile);
     } catch (error) {
       await transaction.rollback();
       throw error;
@@ -101,27 +125,15 @@ class FileService {
   }
 
   async getDrafts(user, { limit = 10, cursor = null } = {}) {
-    const limitNum = parseInt(limit) || 10;
+    const limitNum = Number.parseInt(limit, 10) || 10;
     const decodedCursor = cursor ? decodeCursor(cursor) : null;
 
     const whereClause = {
       current_holder_id: user.id,
-      status: FILE_STATUS.DRAFT, // Strictly only drafts
+      status: FILE_STATUS.DRAFT,
     };
 
-    if (decodedCursor) {
-      whereClause[Op.and] = [
-        {
-          [Op.or]: [
-            { updatedAt: { [Op.lt]: decodedCursor.updatedAt } },
-            {
-              updatedAt: decodedCursor.updatedAt,
-              id: { [Op.lt]: decodedCursor.id },
-            },
-          ],
-        },
-      ];
-    }
+    this._applyCursorToWhereClause(whereClause, decodedCursor);
 
     const files = await FileMaster.findAll({
       where: whereClause,
@@ -138,127 +150,91 @@ class FileService {
       ],
     });
 
-    let nextCursor = null;
-    if (files.length > limitNum) {
-      files.pop();
-      const lastItem = files[files.length - 1];
-      nextCursor = encodeCursor({
-        updatedAt: lastItem.updatedAt,
-        id: lastItem.id,
-      });
-    }
+    const nextCursor = this._extractNextCursor(files, limitNum);
+    const data = files.map((file) => FileResponseDto(file));
 
-    const data = files.map((file) => new FileResponseDto(file));
     return { data, nextCursor };
   }
 
-  // ... existing imports
   async getInbox(user, { limit = 10, cursor = null } = {}) {
-    try {
-      const limitNum = parseInt(limit) || 10;
-      const decodedCursor = cursor ? decodeCursor(cursor) : null;
+    const limitNum = Number.parseInt(limit, 10) || 10;
+    const decodedCursor = cursor ? decodeCursor(cursor) : null;
 
-      // 🟢 THE FIX: Base Condition now strictly checks 'current_holder_id'
-      const whereClause = {
-        current_designation_id: user.designation_id,
-        current_department_id: user.department_id,
-        [Op.and]: [
-          {
-            [Op.or]: [
-              { status: { [Op.ne]: "DRAFT" } },
-              { status: { [Op.is]: null } },
-            ],
-          },
-        ],
-      };
-
-      // Apply Cursor (Pagination Logic)
-      if (decodedCursor) {
-        whereClause[Op.and].push({
+    const whereClause = {
+      current_designation_id: user.designation_id,
+      current_department_id: user.department_id,
+      [Op.and]: [
+        {
           [Op.or]: [
-            { updatedAt: { [Op.lt]: decodedCursor.updatedAt } }, // Older than cursor
+            { status: { [Op.ne]: "DRAFT" } },
+            { status: { [Op.is]: null } },
+          ],
+        },
+      ],
+    };
+
+    this._applyCursorToWhereClause(whereClause, decodedCursor);
+
+    const files = await FileMaster.findAll({
+      where: whereClause,
+      limit: limitNum + 1,
+      order: [
+        ["updatedAt", "DESC"],
+        ["id", "DESC"],
+      ],
+      include: [
+        { model: User, as: "creator", attributes: ["full_name"] },
+        { model: Department, as: "department", attributes: ["name"] },
+        {
+          model: Designation,
+          as: "currentDesignation",
+          attributes: ["name"],
+        },
+        { model: Department, as: "currentDepartment", attributes: ["name"] },
+        { model: User, as: "currentHolder", attributes: ["full_name"] },
+        {
+          model: FileMovement,
+          as: "movements",
+          order: [["id", "DESC"]],
+          include: [
             {
-              updatedAt: decodedCursor.updatedAt,
-              id: { [Op.lt]: decodedCursor.id }, // Tie-breaker: smaller ID
+              model: User,
+              as: "sender",
+              attributes: ["full_name", "signature_url"],
+              include: [
+                {
+                  model: Designation,
+                  as: "designation",
+                  attributes: ["name"],
+                },
+              ],
+            },
+            {
+              model: FileAttachment,
+              as: "attachments",
+              attributes: [
+                "id",
+                "original_name",
+                "file_url",
+                "mime_type",
+                "file_size",
+              ],
             },
           ],
-        });
-      }
+        },
+      ],
+    });
 
-      const files = await FileMaster.findAll({
-        where: whereClause,
-        limit: limitNum + 1,
-        order: [
-          ["updatedAt", "DESC"],
-          ["id", "DESC"],
-        ],
-        include: [
-          { model: User, as: "creator", attributes: ["full_name"] },
-          { model: Department, as: "department", attributes: ["name"] },
-          {
-            model: Designation,
-            as: "currentDesignation",
-            attributes: ["name"],
-          },
-          { model: Department, as: "currentDepartment", attributes: ["name"] },
-          { model: User, as: "currentHolder", attributes: ["full_name"] },
-          {
-            model: FileMovement,
-            as: "movements",
-            order: [["id", "DESC"]],
-            include: [
-              {
-                model: User,
-                as: "sender",
-                attributes: ["full_name", "signature_url"],
-                include: [
-                  {
-                    model: Designation,
-                    as: "designation",
-                    attributes: ["name"],
-                  },
-                ],
-              },
-              {
-                model: FileAttachment,
-                as: "attachments",
-                attributes: [
-                  "id",
-                  "original_name",
-                  "file_url",
-                  "mime_type",
-                  "file_size",
-                ],
-              },
-            ],
-          },
-        ],
-      });
+    const nextCursor = this._extractNextCursor(files, limitNum);
+    const data = files.map((file) => FileResponseDto(file));
 
-      let nextCursor = null;
-      if (files.length > limitNum) {
-        files.pop();
-        const lastItem = files[files.length - 1];
-        nextCursor = encodeCursor({
-          updatedAt: lastItem.updatedAt,
-          id: lastItem.id,
-        });
-      }
-
-      const data = files.map((file) => new FileResponseDto(file));
-
-      return { data, nextCursor };
-    } catch (error) {
-      console.error("Error in getInbox:", error);
-      throw error;
-    }
+    return { data, nextCursor };
   }
 
-
   async getOutbox(user, { limit = 10, cursor = null } = {}) {
-    const limitNum = parseInt(limit) || 10;
+    const limitNum = Number.parseInt(limit, 10) || 10;
     const decodedCursor = cursor ? decodeCursor(cursor) : null;
-    // 1. Identify files I have ever touched/sent
+
     const movements = await FileMovement.findAll({
       attributes: ["file_id"],
       where: {
@@ -277,20 +253,8 @@ class FileService {
       [Op.and]: [{ current_designation_id: { [Op.ne]: user.designation_id } }],
     };
 
-    // Apply Cursor
-    if (decodedCursor) {
-      whereClause[Op.and].push({
-        [Op.or]: [
-          { updatedAt: { [Op.lt]: decodedCursor.updatedAt } },
-          {
-            updatedAt: decodedCursor.updatedAt,
-            id: { [Op.lt]: decodedCursor.id },
-          },
-        ],
-      });
-    }
+    this._applyCursorToWhereClause(whereClause, decodedCursor);
 
-    // 2. Fetch Files (NO STATUS CHECK)
     const files = await FileMaster.findAll({
       where: whereClause,
       limit: limitNum + 1,
@@ -330,23 +294,15 @@ class FileService {
       ],
     });
 
-    let nextCursor = null;
-    if (files.length > limitNum) {
-      files.pop();
-      const lastItem = files[files.length - 1];
-      nextCursor = encodeCursor({
-        updatedAt: lastItem.updatedAt,
-        id: lastItem.id,
-      });
-    }
+    const nextCursor = this._extractNextCursor(files, limitNum);
+    const filesWithRemark = files.map((f) => FileResponseDto(f));
 
-    const filesWithRemark = files.map((f) => new FileResponseDto(f));
     return { data: filesWithRemark, nextCursor };
   }
 
   async getFileHistory(fileId, { limit = 20, cursor = null } = {}) {
-    const limitNum = parseInt(limit) || 20;
-    const cursorId = cursor ? parseInt(cursor) : 0;
+    const limitNum = Number.parseInt(limit, 10) || 20;
+    const cursorId = cursor ? Number.parseInt(cursor, 10) : 0;
 
     const file = await FileMaster.findByPk(fileId, {
       include: [
@@ -361,10 +317,9 @@ class FileService {
 
     if (!file) throw new AppError("File not found", 404);
 
-    // 🟢 FETCH BACKWARDS (Older messages)
     const movementWhere = { file_id: fileId };
     if (cursorId > 0) {
-      movementWhere.id = { [Op.lt]: cursorId }; // Op.lt means "Less Than"
+      movementWhere.id = { [Op.lt]: cursorId };
     }
 
     const movements = await FileMovement.findAll({
@@ -399,18 +354,17 @@ class FileService {
           ],
         },
       ],
-      order: [["id", "DESC"]], // 🟢 Fetch Newest First
+      order: [["id", "DESC"]],
     });
 
     let nextCursor = null;
     if (movements.length > limitNum) {
       movements.pop();
-      nextCursor = movements[movements.length - 1].id;
+      nextCursor = movements.at(-1).id;
     }
 
-    // 🟢 REVERSE the array so it's chronological (Top to Bottom) for the UI!
-    file.movements = movements.reverse();
-    const formattedData = new FileResponseDto(file);
+    file.movements = movements.toReversed();
+    const formattedData = FileResponseDto(file);
 
     return {
       data: {
@@ -430,10 +384,8 @@ class FileService {
   }
 
   async searchFiles(query, user) {
-    // Changed arg name to 'query' to match usage
     const { text, status, priority, startDate, endDate } = query;
     const whereClause = {
-      // 🚨 SECURITY: Force User's Department (unless you are implementing Global Admin Search later)
       department_id: user.department_id,
     };
 
@@ -448,7 +400,6 @@ class FileService {
     if (priority) whereClause.priority = priority;
 
     if (startDate && endDate) {
-      // If both dates are provided, search between them (append time to include the whole end day)
       whereClause.createdAt = {
         [Op.between]: [
           new Date(startDate),
@@ -456,10 +407,8 @@ class FileService {
         ],
       };
     } else if (startDate) {
-      // Only start date provided (From this date onwards)
       whereClause.createdAt = { [Op.gte]: new Date(startDate) };
     } else if (endDate) {
-      // Only end date provided (Up to this date)
       whereClause.createdAt = {
         [Op.lte]: new Date(`${endDate}T23:59:59.999Z`),
       };
@@ -473,7 +422,6 @@ class FileService {
           as: "currentHolder",
           attributes: ["full_name"],
         },
-        // 🚨 ADDED Includes
         { model: Designation, as: "currentDesignation", attributes: ["name"] },
         { model: Department, as: "currentDepartment", attributes: ["name"] },
         { model: Department, as: "department", attributes: ["name"] },
@@ -481,36 +429,25 @@ class FileService {
       order: [["updatedAt", "DESC"]],
     });
 
-    return files.map((file) => new FileResponseDto(file));
+    return files.map((file) => FileResponseDto(file));
   }
 
-  /**
-   * Helper: Check Download Permission
-   * logic: Allow if User is Creator OR Current Holder OR in the same Department
-   */
   _hasDownloadAccess(file, user) {
     const isCreator = file.created_by === user.id;
 
-    // Position-based check for Holder
     const isHolder =
       file.current_designation_id === user.designation_id &&
       file.current_department_id === user.department_id;
 
-    // Department check (Public within the department)
     const isSameDept = file.department_id === user.department_id;
 
-    // Allow if any of these are true
     return isCreator || isHolder || isSameDept;
   }
 
-  /**
-   * 2. Download Attachment
-   */
   async downloadAttachment(attachmentId, user) {
     const attachment = await FileAttachment.findByPk(attachmentId);
     if (!attachment) throw new AppError("Attachment not found", 404);
 
-    // We need the parent file to check permissions
     const file = await FileMaster.findByPk(attachment.file_id);
     if (!file) throw new AppError("Associated File not found", 404);
 
@@ -537,19 +474,12 @@ class FileService {
     }
   }
 
-  /**
-   * Internal helper for cross-module calls.
-   * Workflow (and other modules) must not access FileMaster directly.
-   */
   async getFileOrThrow(fileId, transaction = null) {
     const file = await FileMaster.findByPk(fileId, { transaction });
     if (!file) throw new AppError("File not found", 404);
     return file;
   }
 
-  /**
-   * Called by the Workflow module to mark a file as verified.
-   */
   async markFileVerified(fileId, verifiedByUserId, transaction = null) {
     const file = await this.getFileOrThrow(fileId, transaction);
 
@@ -561,10 +491,6 @@ class FileService {
     return file;
   }
 
-  /**
-   * Called by the Workflow module to update file routing fields after a move.
-   * Keeps all FileMaster mutation within the E-File domain.
-   */
   async updateFileLocation(fileId, newHolderId, transaction = null) {
     const file = await this.getFileOrThrow(fileId, transaction);
 
@@ -575,7 +501,6 @@ class FileService {
     file.current_designation_id = receiver.designation_id;
     file.current_department_id = receiver.department_id;
 
-    // Preserve existing behavior from WorkflowService: status is cleared on move
     file.status = null;
 
     await file.save({ transaction });

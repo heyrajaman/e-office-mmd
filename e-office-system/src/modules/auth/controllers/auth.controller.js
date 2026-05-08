@@ -4,7 +4,7 @@ import ChangePasswordRequestDto from "../dtos/request/ChangePasswordRequestDto.j
 import SetPinRequestDto from "../dtos/request/SetPinRequestDto.js";
 import ForgotPasswordRequestDto from "../dtos/request/ForgotPasswordRequestDto.js";
 import ResetPasswordRequestDto from "../dtos/request/ResetPasswordRequestDto.js";
-import UserResponseDto from "../../users/dtos/response/UserResponseDto.js"; 
+import UserResponseDto from "../../users/dtos/response/UserResponseDto.js";
 
 class AuthController {
   async login(req, res, next) {
@@ -27,7 +27,7 @@ class AuthController {
         success: true,
         message: "Login successful",
         data: userData,
-        token: token
+        token: token,
       });
     } catch (error) {
       next(error);
@@ -36,15 +36,12 @@ class AuthController {
 
   async logout(req, res, next) {
     try {
-      // 1. Extract the token from cookies or headers
+      // 1. Extract the token from cookies or headers using Optional Chaining
       let token;
-      if (req.cookies && req.cookies.jwt) {
+      if (req.cookies?.jwt) {
         token = req.cookies.jwt;
-      } else if (
-        req.headers.authorization &&
-        req.headers.authorization.startsWith("Bearer")
-      ) {
-        token = req.headers.authorization.split(" ")[1];
+      } else if (req.headers.authorization?.startsWith("Bearer")) {
+        token = req.headers.authorization.split(" ");
       }
 
       await AuthService.logout(token);
@@ -125,21 +122,20 @@ class AuthController {
     }
   }
 
-
   async getMe(req, res, next) {
-  try {
-    // req.user is already attached by the 'protect' middleware
-    const userData = new UserResponseDto(req.user); 
+    try {
+      // req.user is already attached by the 'protect' middleware
+      const userData = new UserResponseDto(req.user);
 
-    res.status(200).json({
-      success: true,
-      message: "Current user fetched successfully",
-      data: userData,
-    });
-  } catch (error) {
-    next(error);
+      res.status(200).json({
+        success: true,
+        message: "Current user fetched successfully",
+        data: userData,
+      });
+    } catch (error) {
+      next(error);
+    }
   }
-}
 }
 
 export default new AuthController();

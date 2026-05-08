@@ -1,11 +1,13 @@
-import fs from "fs";
-import path from "path";
+import fs from "node:fs";
+import path from "node:path";
+import crypto from "node:crypto";
 import { BUCKET_NAME, minioClient } from "../../config/minio.js";
 
 class StorageService {
   async uploadFileToMinIO(fileData, destinationPath) {
     const extension = path.extname(fileData.originalname || "");
-    const uniqueSuffix = `${Date.now()}-${Math.round(Math.random() * 1e4)}`;
+
+    const uniqueSuffix = `${Date.now()}-${crypto.randomInt(0, 10000)}`;
     const objectName = `${destinationPath}/${uniqueSuffix}${extension}`;
 
     try {
@@ -26,7 +28,8 @@ class StorageService {
 
   async uploadBufferToMinIO(fileData, destinationPath) {
     const extension = path.extname(fileData.originalname || "");
-    const uniqueSuffix = `${Date.now()}-${Math.round(Math.random() * 1e4)}`;
+
+    const uniqueSuffix = `${Date.now()}-${crypto.randomInt(0, 10000)}`;
     const objectName = `${destinationPath}/${uniqueSuffix}${extension}`;
 
     await minioClient.putObject(

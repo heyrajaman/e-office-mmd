@@ -33,7 +33,7 @@ const seedDepartments = async () => {
 
     for (const dept of departments) {
       // "findOrCreate" ensures we don't create duplicates if you run this twice
-      const [record, created] = await Department.findOrCreate({
+      const [, created] = await Department.findOrCreate({
         where: { name: dept.name },
         defaults: dept,
       });

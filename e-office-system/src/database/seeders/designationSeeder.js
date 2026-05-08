@@ -30,7 +30,7 @@ const seedDesignations = async () => {
 
     // 3. Insert into Database
     for (const d of data) {
-      const [record, created] = await Designation.findOrCreate({
+      const [, created] = await Designation.findOrCreate({
         where: { name: d.name },
         defaults: d,
       });

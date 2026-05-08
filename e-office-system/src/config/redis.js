@@ -18,12 +18,11 @@ redisClient.on("error", (err) => {
 });
 
 // Immediately invoked async function to connect
-(async () => {
-  try {
-    await redisClient.connect();
-  } catch (error) {
-    console.error("Failed to connect to Redis:", error);
-  }
-})();
+
+try {
+  await redisClient.connect();
+} catch (error) {
+  console.error("Failed to connect to Redis:", error);
+}
 
 export default redisClient;

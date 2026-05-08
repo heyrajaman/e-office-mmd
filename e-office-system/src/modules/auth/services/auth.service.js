@@ -6,7 +6,7 @@ import {
 } from "../../../database/models/index.js";
 import AuthResponseDto from "../dtos/response/AuthResponseDto.js";
 import AppError from "../../../utils/AppError.js";
-import crypto from "crypto";
+import crypto from "node:crypto"; // ✅ Fixed: node prefix
 import notificationService from "../../notifications/services/notification.service.js";
 import { passwordResetTemplate } from "../../notifications/templates/emailTemplates.js";
 import redisClient from "../../../config/redis.js";
@@ -42,7 +42,8 @@ class AuthService {
     const token = this.generateToken(user);
 
     // 4. Return DTO (Sanitized)
-    return new AuthResponseDto(user, token);
+    // ✅ Fixed: Removed 'new' since AuthResponseDto is now a function
+    return AuthResponseDto(user, token);
   }
 
   async logout(token) {

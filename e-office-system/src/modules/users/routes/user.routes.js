@@ -18,10 +18,7 @@ const permitAdminOrPresident = (req, res, next) => {
     return next();
   }
 
-  if (
-    req.user.designation &&
-    req.user.designation.name === DESIGNATIONS.PRESIDENT
-  ) {
+  if (req.user.designation?.name === DESIGNATIONS.PRESIDENT) {
     return next();
   }
 

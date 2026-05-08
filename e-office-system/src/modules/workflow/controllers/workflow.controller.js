@@ -2,7 +2,7 @@ import WorkflowService from "../services/workflow.service.js";
 import MoveFileRequestDto from "../dtos/request/MoveFileRequestDto.js";
 import AppError from "../../../utils/AppError.js";
 import { minioClient, BUCKET_NAME } from "../../../config/minio.js";
-import fs from "fs";
+import fs from "node:fs";
 
 class WorkflowController {
   async moveFile(req, res, next) {
@@ -51,10 +51,11 @@ class WorkflowController {
             if (!key) return;
             try {
               await minioClient.removeObject(BUCKET_NAME, key);
-            } catch (cleanupErr) {
+            } catch (error_) {
+              // ✅ FIXED: Renamed to error_
               console.error(
                 "Failed to clean up MinIO object on error:",
-                cleanupErr,
+                error_, // ✅ FIXED: Referenced new name
               );
             }
           }),

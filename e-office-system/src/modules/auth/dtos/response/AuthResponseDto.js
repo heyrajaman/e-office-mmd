@@ -1,16 +1,17 @@
-class AuthResponseDto {
-  constructor(user, token) {
-    this.token = token;
-    this.user = {
+const AuthResponseDto = (user, token) => {
+  return {
+    token,
+    user: {
       id: user.id,
       fullName: user.full_name,
       phoneNumber: user.phone_number,
       systemRole: user.system_role, // ADMIN, STAFF, BOARD_MEMBER
-      designation: user.designation ? user.designation.name : null,
-      department: user.department ? user.department.name : null,
+      // Used optional chaining here for an extra clean up!
+      designation: user.designation?.name || null,
+      department: user.department?.name || null,
       isPinSet: !!user.security_pin,
-    };
-  }
-}
+    },
+  };
+};
 
 export default AuthResponseDto;

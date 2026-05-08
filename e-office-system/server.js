@@ -1,5 +1,5 @@
 import "dotenv/config"; // Automatically loads .env
-import http from "http"; // <-- Added to create a server for Socket.io
+import http from "node:http";
 import app from "./src/app.js"; // Note the .js extension is mandatory in ESM
 import { sequelize } from "./src/database/models/index.js"; // Will enable later
 import { initMinio } from "./src/config/minio.js";

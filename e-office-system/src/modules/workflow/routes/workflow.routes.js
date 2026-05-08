@@ -1,7 +1,6 @@
 import { Router } from "express";
 import WorkflowController from "../controllers/workflow.controller.js";
 import { protect } from "../../../middlewares/auth.middleware.js";
-import { restrictTo } from "../../../middlewares/rbac.middleware.js";
 import {
   upload,
   validatePdfUploads,

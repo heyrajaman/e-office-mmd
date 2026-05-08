@@ -290,9 +290,6 @@ router.get("/search", FileController.searchFiles);
  */
 router.get("/:id/history", FileController.getFileHistory);
 
-// POST /api/v1/files
-// router.post("/", upload.single("puc"), FileController.createFile);
-
 /**
  * @openapi
  * /files:

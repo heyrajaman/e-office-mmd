@@ -31,11 +31,11 @@ export const initSocket = async (server) => {
       let token;
 
       // 1. Check if token is sent explicitly in socket auth (recommended for React)
-      if (socket.handshake.auth && socket.handshake.auth.token) {
+      if (socket.handshake.auth?.token) {
         token = socket.handshake.auth.token;
       }
       // 2. Fallback: Check if it's in the cookies (like your Express setup)
-      else if (socket.handshake.headers && socket.handshake.headers.cookie) {
+      else if (socket.handshake.headers?.cookie) {
         const cookies = socket.handshake.headers.cookie.split(";");
         const jwtCookie = cookies.find((c) => c.trim().startsWith("jwt="));
         if (jwtCookie) {
