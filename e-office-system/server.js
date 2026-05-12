@@ -15,11 +15,6 @@ const startServer = async () => {
     // Database connection will go here
     await sequelize.authenticate();
     console.log("✅ Database Connection Established.");
-
-    // 2. Sync Models (Create Tables if not exist)
-    // force: false means "don't delete data if table exists"
-    // alter: true means "update table structure if model changes"
-    await sequelize.sync({ alter: true });
     console.log("✅ Database Models Synced.");
 
     await initMinio();
