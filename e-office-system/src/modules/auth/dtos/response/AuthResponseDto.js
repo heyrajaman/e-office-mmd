@@ -9,6 +9,7 @@ const AuthResponseDto = (user, token) => {
       // Used optional chaining here for an extra clean up!
       designation: user.designation?.name || null,
       department: user.department?.name || null,
+      email: user.email,
       isPinSet: !!user.security_pin,
     },
   };
