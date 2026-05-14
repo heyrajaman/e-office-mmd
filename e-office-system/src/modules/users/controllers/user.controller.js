@@ -39,10 +39,10 @@ class UserController {
       const signatureFile = req.file;
       if (signatureFile) {
         const sizeKB = signatureFile.size / 1024;
-        if (sizeKB < 20 || sizeKB > 100) {
+        if (sizeKB < 2 || sizeKB > 100) {
           await cleanupUploadedFile(signatureFile);
           throw new AppError(
-            "Signature image must be between 20KB and 100KB.",
+            "Signature image must be between 2KB and 100KB.",
             400,
           );
         }

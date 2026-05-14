@@ -19,7 +19,7 @@ const startServer = async () => {
     // 2. Sync Models (Create Tables if not exist)
     // force: false means "don't delete data if table exists"
     // alter: true means "update table structure if model changes"
-    await sequelize.sync({ alter: true });
+    await sequelize.sync();
     console.log("✅ Database Models Synced.");
 
     await initMinio();

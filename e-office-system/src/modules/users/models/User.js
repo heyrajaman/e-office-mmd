@@ -105,7 +105,7 @@ User.init(
 
     signature_url: {
       type: DataTypes.STRING,
-      allowNull: true,
+      allowNull: false,
     },
 
     is_active: {

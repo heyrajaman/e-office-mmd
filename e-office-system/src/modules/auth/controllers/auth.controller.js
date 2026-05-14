@@ -125,7 +125,7 @@ class AuthController {
   async getMe(req, res, next) {
     try {
       // req.user is already attached by the 'protect' middleware
-      const userData = new UserResponseDto(req.user);
+      const userData = UserResponseDto(req.user);
 
       res.status(200).json({
         success: true,
